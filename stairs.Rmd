@@ -1,0 +1,278 @@
+---
+title: "Staircase and elevator use"
+author: "Nandor Hajdu"
+date: "2022-12-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, warning = FALSE,
+                      message = FALSE)
+```
+
+```{r read_data}
+
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+
+library(tidyverse)
+library(tidymodels)
+library(janitor)
+
+dat <- read_csv("behav.csv")
+
+dat <- dat %>% clean_names() %>% 
+  filter(building_visited != "Egyéb:") %>% 
+  mutate(id = as.factor(id),
+         choice = as.factor(choice))
+```
+
+## Build models
+
+```{r}
+
+set.seed(12)
+
+stair_split <- group_initial_split(dat, group = id)
+stair_split
+stair_train <- training(stair_split)
+stair_test <- testing(stair_split)
+
+```
+
+```{r recipe}
+
+xgb_rec <- recipe(choice ~ ., stair_train) %>%
+    update_role(id, new_role = "ID") %>% 
+    step_bin2factor(choice) %>% 
+    step_impute_knn(all_numeric_predictors()) %>% 
+    step_zv(all_predictors()) %>%
+    step_dummy(c(building_visited, peers), one_hot = TRUE)
+
+summary(prep(xgb_rec))
+```
+
+```{r xgboost_spec}
+
+xgb_spec <- 
+  boost_tree(
+    trees = 1000,
+    tree_depth = tune(), min_n = tune(), loss_reduction = tune(),
+    sample_size = tune(), learn_rate = tune(), mtry = tune()
+  ) %>% 
+  set_engine("xgboost") %>% 
+  set_mode("classification")
+
+xgb_grid <- 
+  grid_latin_hypercube(
+    tree_depth(),
+    min_n(),
+    loss_reduction(),
+    sample_size = sample_prop(),
+    learn_rate(),
+    finalize(mtry(), stair_train),
+    size = 100
+  )
+
+```
+
+```{r}
+xgb_wf <- workflow() %>% 
+  add_recipe(xgb_rec) %>% 
+  add_model(xgb_spec)
+  
+folds <- vfold_cv(stair_train, strata = choice)
+folds
+```
+
+```{r}
+doParallel::registerDoParallel()
+
+xgb_res <- tune_grid(
+  xgb_wf,
+  resamples = folds,
+  grid = xgb_grid,
+  control = control_grid(save_pred = TRUE)
+)
+```
+
+
+```{r}
+xgb_res %>% collect_metrics()
+xgb_best <- select_best(xgb_res, "roc_auc")
+
+final_xgb <- finalize_workflow(xgb_wf, xgb_best)
+
+
+library(vip)
+
+final_xgb %>% 
+  fit(data=stair_train) %>% 
+  pull_workflow_fit() %>% 
+  vip(geom = "point")
+
+
+xgb_final_res <- last_fit(final_xgb, stair_split)
+xgb_final_res %>% collect_metrics()
+xgb_final_res %>% 
+  collect_predictions() %>% 
+  roc_curve(choice, .pred_yes) %>% 
+  autoplot()
+```
+
+```{r define glmmLasso for tidymodels workflow}
+
+set_new_model("glmm_lasso")
+set_model_mode(model = "glmm_lasso", mode = "classification")
+set_model_engine(
+  "glmm_lasso", 
+  mode = "classification", 
+  eng = "glmmLasso"
+)
+set_dependency("glmm_lasso", eng = "glmmLasso", pkg = "glmmLasso")
+
+set_model_arg(
+  model = "glmm_lasso",
+  eng = "glmmLasso",
+  parsnip = "penalty",
+  original = "lambda",
+  func = list(pkg = "foo", fun = "bar"),
+  has_submodel = FALSE
+)
+
+
+glmm_lasso <-
+  function(fix = NULL, rnd = NULL, mode = "classification", lambda = NULL) {
+    # Check for correct mode
+    if (mode  != "classification") {
+      rlang::abort("`mode` should be 'classification'")
+    }
+    
+    # Capture the arguments in quosures
+    args <- list(fix = rlang::enquo(fix), 
+                 rnd = rlang::enquo(rnd),
+                 lambda = rlang::enquo(lambda))
+    
+    # Save some empty slots for future parts of the specification
+    new_model_spec(
+      "glmm_lasso",
+      args = args,
+      eng_args = NULL,
+      mode = mode,
+      method = NULL,
+      engine = NULL
+    )
+  }
+
+set_fit(
+  model = "glmm_lasso",
+  eng = "glmmLasso",
+  mode = "classification",
+  value = list(
+    interface = "data.frame",
+   protect = c("fix", "rnd", "lambda"),
+    func = c(pkg = "glmmLasso", fun = "glmmLasso"),
+    defaults = list()
+  )
+)
+
+set_encoding(
+  model = "glmm_lasso",
+  eng = "glmmLasso",
+  mode = "classification",
+  options = list(
+    predictor_indicators = "traditional",
+    compute_intercept = TRUE,
+    remove_intercept = TRUE,
+    allow_sparse_x = FALSE
+  )
+)
+
+
+class_info <- 
+  list(
+    pre = NULL,
+    post = NULL,
+    func = c(fun = "predict"),
+    args =
+      # These lists should be of the form:
+      # {predict.mda argument name} = {values provided from parsnip objects}
+      list(
+        # We don't want the first two arguments evaluated right now
+        # since they don't exist yet. `type` is a simple object that
+        # doesn't need to have its evaluation deferred. 
+        object = quote(object$fit),
+        newdata = quote(new_data),
+        type = "class"
+      )
+  )
+
+set_pred(
+  model = "glmm_lasso",
+  eng = "glmmLasso",
+  mode = "classification",
+  type = "class",
+  value = class_info
+)
+
+show_model_info("glmm_lasso")
+
+```
+
+
+
+```{r}
+library(multilevelmod)
+library(embed)
+
+glm_rec <- recipe(stair_train) %>%
+  update_role(choice, new_role = "outcome") %>%
+  #step_num2factor(choice, levels = c("elevator", "stairs")) %>% 
+  update_role(all_numeric(), new_role = "predictor") %>% 
+ # update_role(id, new_role = "ID") %>% 
+  update_role(id, new_role = "predictor") %>% 
+  update_role(c(building_visited, peers), new_role = "predictor") %>% 
+  step_impute_mode(peers) %>% 
+  step_impute_knn(health) %>% 
+  step_scale(all_numeric_predictors()) %>% 
+  #step_dummy(c(building_visited, peers), one_hot = TRUE) %>% 
+  step_zv()# %>% 
+  #step_umap(-c(id, choice))
+  
+glm_rec
+
+x <- prep(glm_rec)
+x2 <- bake(x, new_data = NULL)
+glimpse(x2)
+
+#ggplot(x2, aes(x=UMAP1, y=UMAP2))+
+#  geom_point(aes(col=choice))
+
+glm_spec <- 
+  logistic_reg() %>% 
+  set_engine("glmer",
+             family = binomial(link="logit"))
+
+glm_wf <- workflow() %>% 
+  add_recipe(glm_rec) %>% 
+  add_model(glm_spec,
+            formula = choice ~ laziness + fatigue + luggage + elevator_speed + 
+                      environmental_consciousness + temperature + appeal +                                     number_of_people_waiting_for_the_elevator + peers +
+                      measurement_no + health + building_visited + (speed|id) + 
+                      (1|id) + (destination_floor|id))
+
+doParallel::registerDoParallel()
+
+glm_res <- fit(glm_wf, data = stair_train)
+
+glm_res
+
+#group_folds <- vfold_cv(stair_train, strata = id, v=5)
+#
+#bs_glm <- bootstraps(stair_train)
+#glm_res <- fit_resamples(glm_wf, group_folds)
+#glm_res %>% collect_metrics()
+
+#show_notes(.Last.tune.result)
+
+
+```
