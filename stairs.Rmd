@@ -1,7 +1,7 @@
 ---
 title: "Staircase and elevator use"
 author: "Nandor Hajdu"
-date: "2022-12-15"
+date: "2023-01-11"
 output: html_document
 ---
 
@@ -118,106 +118,6 @@ xgb_final_res %>%
   roc_curve(choice, .pred_yes) %>% 
   autoplot()
 ```
-
-```{r define glmmLasso for tidymodels workflow}
-
-set_new_model("glmm_lasso")
-set_model_mode(model = "glmm_lasso", mode = "classification")
-set_model_engine(
-  "glmm_lasso", 
-  mode = "classification", 
-  eng = "glmmLasso"
-)
-set_dependency("glmm_lasso", eng = "glmmLasso", pkg = "glmmLasso")
-
-set_model_arg(
-  model = "glmm_lasso",
-  eng = "glmmLasso",
-  parsnip = "penalty",
-  original = "lambda",
-  func = list(pkg = "foo", fun = "bar"),
-  has_submodel = FALSE
-)
-
-
-glmm_lasso <-
-  function(fix = NULL, rnd = NULL, mode = "classification", lambda = NULL) {
-    # Check for correct mode
-    if (mode  != "classification") {
-      rlang::abort("`mode` should be 'classification'")
-    }
-    
-    # Capture the arguments in quosures
-    args <- list(fix = rlang::enquo(fix), 
-                 rnd = rlang::enquo(rnd),
-                 lambda = rlang::enquo(lambda))
-    
-    # Save some empty slots for future parts of the specification
-    new_model_spec(
-      "glmm_lasso",
-      args = args,
-      eng_args = NULL,
-      mode = mode,
-      method = NULL,
-      engine = NULL
-    )
-  }
-
-set_fit(
-  model = "glmm_lasso",
-  eng = "glmmLasso",
-  mode = "classification",
-  value = list(
-    interface = "data.frame",
-   protect = c("fix", "rnd", "lambda"),
-    func = c(pkg = "glmmLasso", fun = "glmmLasso"),
-    defaults = list()
-  )
-)
-
-set_encoding(
-  model = "glmm_lasso",
-  eng = "glmmLasso",
-  mode = "classification",
-  options = list(
-    predictor_indicators = "traditional",
-    compute_intercept = TRUE,
-    remove_intercept = TRUE,
-    allow_sparse_x = FALSE
-  )
-)
-
-
-class_info <- 
-  list(
-    pre = NULL,
-    post = NULL,
-    func = c(fun = "predict"),
-    args =
-      # These lists should be of the form:
-      # {predict.mda argument name} = {values provided from parsnip objects}
-      list(
-        # We don't want the first two arguments evaluated right now
-        # since they don't exist yet. `type` is a simple object that
-        # doesn't need to have its evaluation deferred. 
-        object = quote(object$fit),
-        newdata = quote(new_data),
-        type = "class"
-      )
-  )
-
-set_pred(
-  model = "glmm_lasso",
-  eng = "glmmLasso",
-  mode = "classification",
-  type = "class",
-  value = class_info
-)
-
-show_model_info("glmm_lasso")
-
-```
-
 
 
 ```{r}
