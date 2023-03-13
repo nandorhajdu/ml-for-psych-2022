@@ -17,16 +17,30 @@ setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 library(tidyverse)
 library(tidymodels)
 library(janitor)
+library(glmertree)
 
 dat <- read_csv("behav.csv")
 
 dat <- dat %>% clean_names() %>% 
   filter(building_visited != "Egyéb:") %>% 
   mutate(id = as.factor(id),
-         choice = as.factor(choice))
+         choice = as.factor(choice))%>%
+  group_by(id) %>% 
+  mutate(
+    n = n(),
+    incl = case_when(
+    n >= 7 ~ TRUE, .default = FALSE #we filter IDs with less than 8 entries
+        )
+    ) %>% 
+  filter(incl) %>% 
+  mutate(
+    n = NULL,
+    incl = NULL
+  ) 
+
 ```
 
-## Build models
+## Split data into training and test sets
 
 ```{r}
 
@@ -39,140 +53,88 @@ stair_test <- testing(stair_split)
 
 ```
 
-```{r recipe}
 
-xgb_rec <- recipe(choice ~ ., stair_train) %>%
-    update_role(id, new_role = "ID") %>% 
-    step_bin2factor(choice) %>% 
-    step_impute_knn(all_numeric_predictors()) %>% 
-    step_zv(all_predictors()) %>%
-    step_dummy(c(building_visited, peers), one_hot = TRUE)
+## Specify tidymodels recipe of feature engineering
 
-summary(prep(xgb_rec))
-```
+```{r glmertree_recipe}
 
-```{r xgboost_spec}
-
-xgb_spec <- 
-  boost_tree(
-    trees = 1000,
-    tree_depth = tune(), min_n = tune(), loss_reduction = tune(),
-    sample_size = tune(), learn_rate = tune(), mtry = tune()
-  ) %>% 
-  set_engine("xgboost") %>% 
-  set_mode("classification")
-
-xgb_grid <- 
-  grid_latin_hypercube(
-    tree_depth(),
-    min_n(),
-    loss_reduction(),
-    sample_size = sample_prop(),
-    learn_rate(),
-    finalize(mtry(), stair_train),
-    size = 100
-  )
-
-```
-
-```{r}
-xgb_wf <- workflow() %>% 
-  add_recipe(xgb_rec) %>% 
-  add_model(xgb_spec)
-  
-folds <- vfold_cv(stair_train, strata = choice)
-folds
-```
-
-```{r}
-doParallel::registerDoParallel()
-
-xgb_res <- tune_grid(
-  xgb_wf,
-  resamples = folds,
-  grid = xgb_grid,
-  control = control_grid(save_pred = TRUE)
-)
-```
-
-
-```{r}
-xgb_res %>% collect_metrics()
-xgb_best <- select_best(xgb_res, "roc_auc")
-
-final_xgb <- finalize_workflow(xgb_wf, xgb_best)
-
-
-library(vip)
-
-final_xgb %>% 
-  fit(data=stair_train) %>% 
-  pull_workflow_fit() %>% 
-  vip(geom = "point")
-
-
-xgb_final_res <- last_fit(final_xgb, stair_split)
-xgb_final_res %>% collect_metrics()
-xgb_final_res %>% 
-  collect_predictions() %>% 
-  roc_curve(choice, .pred_yes) %>% 
-  autoplot()
-```
-
-
-```{r}
-library(multilevelmod)
-library(embed)
-
-glm_rec <- recipe(stair_train) %>%
+rec <- recipe(stair_train) %>%
   update_role(choice, new_role = "outcome") %>%
-  #step_num2factor(choice, levels = c("elevator", "stairs")) %>% 
   update_role(all_numeric(), new_role = "predictor") %>% 
- # update_role(id, new_role = "ID") %>% 
   update_role(id, new_role = "predictor") %>% 
   update_role(c(building_visited, peers), new_role = "predictor") %>% 
   step_impute_mode(peers) %>% 
+  step_string2factor(all_nominal_predictors()) %>% 
   step_impute_knn(health) %>% 
   step_scale(all_numeric_predictors()) %>% 
-  #step_dummy(c(building_visited, peers), one_hot = TRUE) %>% 
-  step_zv()# %>% 
-  #step_umap(-c(id, choice))
+  step_zv(all_predictors())
   
-glm_rec
+print(rec)
 
-x <- prep(glm_rec)
-x2 <- bake(x, new_data = NULL)
-glimpse(x2)
+```
 
-#ggplot(x2, aes(x=UMAP1, y=UMAP2))+
-#  geom_point(aes(col=choice))
+## Execute the recipe and prepare the data for analysis
 
-glm_spec <- 
-  logistic_reg() %>% 
-  set_engine("glmer",
-             family = binomial(link="logit"))
+```{r recipe_prep}
+rec_prepped <- prep(rec)
+stairs_train_baked <- bake(rec_prepped, new_data = NULL)
+stairs_test_baked <- bake(rec_prepped, new_data = stair_test)
 
-glm_wf <- workflow() %>% 
-  add_recipe(glm_rec) %>% 
-  add_model(glm_spec,
-            formula = choice ~ laziness + fatigue + luggage + elevator_speed + 
-                      environmental_consciousness + temperature + appeal +                                     number_of_people_waiting_for_the_elevator + peers +
-                      measurement_no + health + building_visited + (speed|id) + 
-                      (1|id) + (destination_floor|id))
+glimpse(stairs_train_baked)
 
-doParallel::registerDoParallel()
+```
 
-glm_res <- fit(glm_wf, data = stair_train)
+## Model fitting
 
-glm_res
+```{r model_fitting}
+#mod_glmertree_train <- glmertree(choice ~ 1 | id | laziness + fatigue + luggage + 
+#                         elevator_speed + environmental_consciousness + 
+#                         temperature + appeal + 
+#                         number_of_people_waiting_for_the_elevator + peers +
+#                         measurement_no + health + building_visited + speed +
+#                         destination_floor,
+#                       data = stairs_train_baked)
 
-#group_folds <- vfold_cv(stair_train, strata = id, v=5)
-#
-#bs_glm <- bootstraps(stair_train)
-#glm_res <- fit_resamples(glm_wf, group_folds)
-#glm_res %>% collect_metrics()
+#save(mod_glmertree_train, file = "mod_glmertree_train")
 
-#show_notes(.Last.tune.result)
+load(file = "mod_glmertree_train")
 
+summary(mod_glmertree_train)
 
+plot(mod_glmertree_train)
+```
+
+## Checking accuracy on the test set
+
+```{r accuracy_metrics}
+glmertree_pred <- predict(mod_glmertree_train, newdata = stairs_test_baked,
+                          type = "response",
+                          allow.new.levels=TRUE)
+
+predictions <- tibble(
+  truth = stairs_test_baked$choice,
+  stairs_prob = 1 - glmertree_pred,
+  elevator_prob = glmertree_pred,
+  pred = as.factor(ifelse(glmertree_pred > 0.5, 1, 0))
+)
+
+predictions %>% conf_mat(truth, pred)
+
+accuracy_metrics <- rbind(
+  predictions %>% accuracy(truth = truth, estimate = pred),
+  predictions %>% precision(truth = truth, estimate = pred),
+  predictions %>% recall(truth = truth, estimate = pred),
+  predictions %>% yardstick::bal_accuracy(truth, pred),
+  predictions %>% kap(truth = truth, estimate = pred),
+  predictions %>% yardstick::f_meas(truth, pred),
+  predictions %>% roc_auc(truth, stairs_prob),
+  predictions %>% yardstick::pr_auc(truth, stairs_prob)
+  ) %>% 
+  mutate(
+    .estimate = signif(.estimate, 3),
+    .estimator = NULL
+  )
+
+predictions %>% roc_curve(truth, stairs_prob) %>% autoplot()
+predictions %>% pr_curve(truth, stairs_prob) %>% autoplot()
 ```
