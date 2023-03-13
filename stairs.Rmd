@@ -86,20 +86,24 @@ glimpse(stairs_train_baked)
 
 ## Model fitting
 
-```{r model_fitting}
-#mod_glmertree_train <- glmertree(choice ~ 1 | id | laziness + fatigue + luggage + 
-#                         elevator_speed + environmental_consciousness + 
-#                         temperature + appeal + 
-#                         number_of_people_waiting_for_the_elevator + peers +
-#                         measurement_no + health + building_visited + speed +
-#                         destination_floor,
-#                       data = stairs_train_baked)
+```{r model_fitting, cache=TRUE}
+mod_glmertree_train <- glmertree(choice ~ 1 | id | laziness + fatigue + luggage + 
+                         elevator_speed + environmental_consciousness + 
+                         temperature + appeal + 
+                         number_of_people_waiting_for_the_elevator + peers +
+                         measurement_no + health + building_visited + speed +
+                         destination_floor,
+                       data = stairs_train_baked)
 
 #save(mod_glmertree_train, file = "mod_glmertree_train")
 
-load(file = "mod_glmertree_train")
+#load(file = "mod_glmertree_train")
 
-summary(mod_glmertree_train)
+
+library(parameters)
+
+mod_glmertree_train %>% 
+  tidy(conf.int = TRUE)
 
 plot(mod_glmertree_train)
 ```
@@ -137,4 +141,5 @@ accuracy_metrics <- rbind(
 
 predictions %>% roc_curve(truth, stairs_prob) %>% autoplot()
 predictions %>% pr_curve(truth, stairs_prob) %>% autoplot()
+
 ```
