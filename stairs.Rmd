@@ -11,32 +11,36 @@ knitr::opts_chunk$set(echo = TRUE, cache = TRUE, warning = FALSE,
 ```
 
 ```{r read_data}
-
-setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
-
 library(tidyverse)
 library(tidymodels)
 library(janitor)
 library(glmertree)
+library(here)
+library(parameters)
 
-dat <- read_csv("behav.csv")
+# Set up parallel processing
+doParallel::registerDoParallel(cores = parallelly::availableCores())
 
-dat <- dat %>% clean_names() %>% 
-  filter(building_visited != "Egyéb:") %>% 
+theme_set(theme_light())
+
+```
+
+
+```{r read_data}
+stairs_raw <- read_csv(here("behav.csv"))
+
+stairs <-
+  stairs_raw %>%
+  clean_names() %>%
+  filter(building_visited != "Egyéb:") %>%
   mutate(id = as.factor(id),
-         choice = as.factor(choice))%>%
-  group_by(id) %>% 
-  mutate(
-    n = n(),
-    incl = case_when(
-    n >= 7 ~ TRUE, .default = FALSE #we filter IDs with less than 8 entries
-        )
-    ) %>% 
-  filter(incl) %>% 
-  mutate(
-    n = NULL,
-    incl = NULL
-  ) 
+         choice = as.factor(choice)) %>%
+  # filter IDs with less than 8 entries
+  group_by(id) %>%
+  add_count() %>%
+  ungroup() %>%
+  filter(n >= 8) %>% 
+  select(-n)
 
 ```
 
@@ -46,10 +50,9 @@ dat <- dat %>% clean_names() %>%
 
 set.seed(12)
 
-stair_split <- group_initial_split(dat, group = id)
-stair_split
-stair_train <- training(stair_split)
-stair_test <- testing(stair_split)
+stairs_split <- group_initial_split(stairs, group = id)
+stairs_train <- training(stairs_split)
+stairs_test <- testing(stairs_split)
 
 ```
 
@@ -58,27 +61,23 @@ stair_test <- testing(stair_split)
 
 ```{r glmertree_recipe}
 
-rec <- recipe(stair_train) %>%
-  update_role(choice, new_role = "outcome") %>%
-  update_role(all_numeric(), new_role = "predictor") %>% 
-  update_role(id, new_role = "predictor") %>% 
-  update_role(c(building_visited, peers), new_role = "predictor") %>% 
+stairs_rec <- 
+  recipe(stairs_train, formula = choice ~ .) %>%
   step_impute_mode(peers) %>% 
   step_string2factor(all_nominal_predictors()) %>% 
   step_impute_knn(health) %>% 
   step_scale(all_numeric_predictors()) %>% 
   step_zv(all_predictors())
   
-print(rec)
+print(stairs_rec)
 
 ```
 
 ## Execute the recipe and prepare the data for analysis
 
 ```{r recipe_prep}
-rec_prepped <- prep(rec)
+rec_prepped <- prep(stairs_rec)
 stairs_train_baked <- bake(rec_prepped, new_data = NULL)
-stairs_test_baked <- bake(rec_prepped, new_data = stair_test)
 
 glimpse(stairs_train_baked)
 
@@ -87,59 +86,80 @@ glimpse(stairs_train_baked)
 ## Model fitting
 
 ```{r model_fitting, cache=TRUE}
-mod_glmertree_train <- glmertree(choice ~ 1 | id | laziness + fatigue + luggage + 
-                         elevator_speed + environmental_consciousness + 
-                         temperature + appeal + 
-                         number_of_people_waiting_for_the_elevator + peers +
-                         measurement_no + health + building_visited + speed +
-                         destination_floor,
-                       data = stairs_train_baked)
+stairs_res <-
+  glmertree(
+    choice ~ 1 | id | laziness + fatigue + luggage +
+      elevator_speed + environmental_consciousness +
+      temperature + appeal +
+      number_of_people_waiting_for_the_elevator + peers +
+      measurement_no + health + building_visited + speed +
+      destination_floor,
+    family = "binomial",
+    data = stairs_train_baked
+  )
 
-#save(mod_glmertree_train, file = "mod_glmertree_train")
+# write_rds(stairs_res, file = here("model/stairs_res"))
+# stairs_res <- read_rds(file = here("model/stairs_res"))
+```
 
-#load(file = "mod_glmertree_train")
+
+# Investigating variable importance
+```{r}
+# Have to get variable importance
 
 
-library(parameters)
-
-mod_glmertree_train %>% 
-  tidy(conf.int = TRUE)
-
-plot(mod_glmertree_train)
+plot(stairs_res, which = "tree", type = "simple")
+plot(stairs_res, which = "tree.coef")
+stairs_res
 ```
 
 ## Checking accuracy on the test set
 
 ```{r accuracy_metrics}
-glmertree_pred <- predict(mod_glmertree_train, newdata = stairs_test_baked,
-                          type = "response",
-                          allow.new.levels=TRUE)
 
-predictions <- tibble(
-  truth = stairs_test_baked$choice,
-  stairs_prob = 1 - glmertree_pred,
-  elevator_prob = glmertree_pred,
-  pred = as.factor(ifelse(glmertree_pred > 0.5, 1, 0))
-)
+stairs_test_baked <- bake(rec_prepped, new_data = stairs_test)
 
-predictions %>% conf_mat(truth, pred)
-
-accuracy_metrics <- rbind(
-  predictions %>% accuracy(truth = truth, estimate = pred),
-  predictions %>% precision(truth = truth, estimate = pred),
-  predictions %>% recall(truth = truth, estimate = pred),
-  predictions %>% yardstick::bal_accuracy(truth, pred),
-  predictions %>% kap(truth = truth, estimate = pred),
-  predictions %>% yardstick::f_meas(truth, pred),
-  predictions %>% roc_auc(truth, stairs_prob),
-  predictions %>% yardstick::pr_auc(truth, stairs_prob)
-  ) %>% 
-  mutate(
-    .estimate = signif(.estimate, 3),
-    .estimator = NULL
+glmertree_pred <- 
+  predict(
+        stairs_res,
+        newdata = stairs_test_baked,
+        type = "response",
+        allow.new.levels = TRUE
   )
 
-predictions %>% roc_curve(truth, stairs_prob) %>% autoplot()
-predictions %>% pr_curve(truth, stairs_prob) %>% autoplot()
+predictions <- 
+  tibble(
+    truth = stairs_test_baked$choice,
+    stairs_prob = 1 - glmertree_pred,
+    elevator_prob = glmertree_pred,
+    pred = as.factor(if_else(glmertree_pred > 0.5, 1, 0))
+    )
+
+predictions %>% 
+  conf_mat(truth, pred) %>% 
+  autoplot("heatmap")
+
+accuracy_metrics <- 
+  bind_rows(
+    accuracy(predictions, truth = truth, estimate = pred),
+    sensitivity(predictions, truth = truth, estimate = pred),
+    specificity(predictions, truth = truth, estimate = pred),
+    precision(predictions, truth = truth, estimate = pred),
+    recall(predictions, truth = truth, estimate = pred),
+    bal_accuracy(predictions, truth, pred),
+    kap(predictions, truth = truth, estimate = pred),
+    f_meas(predictions, truth, pred),
+    roc_auc(predictions, truth, stairs_prob),
+    pr_auc(predictions, truth, stairs_prob)
+  ) %>% 
+  mutate(.estimate = signif(.estimate, 3),
+         .estimator = NULL
+  )
+
+accuracy_metrics
+
+roc_curve(predictions, truth, stairs_prob) %>% autoplot()
+pr_curve(predictions, truth, stairs_prob) %>% autoplot()
+
 
 ```
