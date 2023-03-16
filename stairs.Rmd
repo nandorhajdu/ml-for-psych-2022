@@ -27,7 +27,7 @@ theme_set(theme_light())
 
 
 ```{r read_data}
-stairs_raw <- read_csv(here("behav.csv"))
+stairs_raw <- read_csv(here("data/behav.csv"))
 
 stairs <-
   stairs_raw %>%
@@ -98,8 +98,8 @@ stairs_res <-
     data = stairs_train_baked
   )
 
-# write_rds(stairs_res, file = here("model/stairs_res"))
-# stairs_res <- read_rds(file = here("model/stairs_res"))
+# write_rds(stairs_res, file = here("model/stairs_res.rds"))
+# stairs_res <- read_rds(file = here("model/stairs_res.rds"))
 ```
 
 
