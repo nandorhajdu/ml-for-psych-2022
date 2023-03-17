@@ -92,11 +92,22 @@ stairs_res <-
       elevator_speed + environmental_consciousness +
       temperature + appeal +
       number_of_people_waiting_for_the_elevator + peers +
-      measurement_no + health + building_visited + speed +
+      health + building_visited + speed +
       destination_floor,
     family = "binomial",
     data = stairs_train_baked
   )
+
+model_pred_tbl <- 
+  tibble(
+    truth = stairs_train_baked$choice,
+    stairs_prob = predict(stairs_res)
+  )
+
+model_roc_auc <- 
+  roc_auc(model_pred_tbl, truth, stairs_prob, event_level = "second")[[1,3]]
+
+
 
 # write_rds(stairs_res, file = here("model/stairs_res.rds"))
 # stairs_res <- read_rds(file = here("model/stairs_res.rds"))
@@ -106,7 +117,56 @@ stairs_res <-
 # Investigating variable importance
 ```{r}
 # Have to get variable importance
+tbl_colnames <- colnames(select(stairs, -c(id, choice)))
+tbl <- tibble(!!!tbl_colnames, .rows = 0)
+permutation_n <- 100
 
+mean_aucs <- 
+  tibble(
+    variable = tbl_colnames,
+    perm_aucs = list(Inf),
+    perm_mean_auc = c(Inf)
+)
+
+for (col in names(tbl)){
+  
+  roc_aucs <- c()
+  
+  for (i in 1:permutation_n){
+
+    perm_df <- stairs_train_baked
+    perm_df[, eval(parse(text = col))] <- perm_df[sample(1:nrow(perm_df)), eval(parse(text = col))]
+    
+    shuffled_pred <- 
+  predict(
+        stairs_res,
+        newdata = perm_df,
+        type = "response",
+        allow.new.levels = TRUE
+  )
+    
+    predictions <- 
+  tibble(
+    truth = stairs_train_baked$choice,
+    stairs_prob = 1 - shuffled_pred
+  )
+    roc_aucs <- append(roc_aucs, roc_auc(predictions, truth, stairs_prob)[[1,3]])
+  }
+  
+  mean_aucs[[match(col, names(tbl)), 2]][[1]] <- roc_aucs
+  mean_aucs[[match(col, names(tbl)), 3]] <- mean(roc_aucs)
+  
+  }
+
+mean_aucs <- mean_aucs %>% 
+  mutate(
+   importance = model_roc_auc - perm_mean_auc 
+  )
+  
+
+ggplot(mean_aucs, aes(x = variable,y = importance)) +
+  geom_bar(stat="identity")+
+  coord_flip()
 
 plot(stairs_res, which = "tree", type = "simple")
 plot(stairs_res, which = "tree.coef")
