@@ -83,7 +83,7 @@ glimpse(stairs_train_baked)
 
 ```
 
-## Model fitting
+# Model fitting
 
 ```{r model_fitting, cache=TRUE}
 stairs_res <-
@@ -98,6 +98,15 @@ stairs_res <-
     data = stairs_train_baked
   )
 
+
+# write_rds(stairs_res, file = here("model/stairs_res.rds"))
+# stairs_res <- read_rds(file = here("model/stairs_res.rds"))
+```
+
+# Checking model performance
+
+```{r accuracy_metrics}
+
 model_pred_tbl <- 
   tibble(
     truth = stairs_train_baked$choice,
@@ -106,76 +115,6 @@ model_pred_tbl <-
 
 model_roc_auc <- 
   roc_auc(model_pred_tbl, truth, stairs_prob, event_level = "second")[[1,3]]
-
-
-
-# write_rds(stairs_res, file = here("model/stairs_res.rds"))
-# stairs_res <- read_rds(file = here("model/stairs_res.rds"))
-```
-
-
-# Investigating variable importance
-```{r}
-# Have to get variable importance
-tbl_colnames <- colnames(select(stairs, -c(id, choice)))
-tbl <- tibble(!!!tbl_colnames, .rows = 0)
-permutation_n <- 100
-
-mean_aucs <- 
-  tibble(
-    variable = tbl_colnames,
-    perm_aucs = list(Inf),
-    perm_mean_auc = c(Inf)
-)
-
-for (col in names(tbl)){
-  
-  roc_aucs <- c()
-  
-  for (i in 1:permutation_n){
-
-    perm_df <- stairs_train_baked
-    perm_df[, eval(parse(text = col))] <- perm_df[sample(1:nrow(perm_df)), eval(parse(text = col))]
-    
-    shuffled_pred <- 
-  predict(
-        stairs_res,
-        newdata = perm_df,
-        type = "response",
-        allow.new.levels = TRUE
-  )
-    
-    predictions <- 
-  tibble(
-    truth = stairs_train_baked$choice,
-    stairs_prob = 1 - shuffled_pred
-  )
-    roc_aucs <- append(roc_aucs, roc_auc(predictions, truth, stairs_prob)[[1,3]])
-  }
-  
-  mean_aucs[[match(col, names(tbl)), 2]][[1]] <- roc_aucs
-  mean_aucs[[match(col, names(tbl)), 3]] <- mean(roc_aucs)
-  
-  }
-
-mean_aucs <- mean_aucs %>% 
-  mutate(
-   importance = model_roc_auc - perm_mean_auc 
-  )
-  
-
-ggplot(mean_aucs, aes(x = variable,y = importance)) +
-  geom_bar(stat="identity")+
-  coord_flip()
-
-plot(stairs_res, which = "tree", type = "simple")
-plot(stairs_res, which = "tree.coef")
-stairs_res
-```
-
-## Checking accuracy on the test set
-
-```{r accuracy_metrics}
 
 stairs_test_baked <- bake(rec_prepped, new_data = stairs_test)
 
@@ -221,5 +160,64 @@ accuracy_metrics
 roc_curve(predictions, truth, stairs_prob) %>% autoplot()
 pr_curve(predictions, truth, stairs_prob) %>% autoplot()
 
+```
+
+# Investigating variable importance
+```{r}
+
+tbl_colnames <- names(select(stairs, -c(id, choice)))
+tbl <- tibble(!!!tbl_colnames, .rows = 0)
+permutation_n <- 100
+
+mean_aucs <- 
+  tibble(
+    variable = tbl_colnames,
+    perm_aucs = list(Inf),
+    perm_mean_auc = c(Inf)
+)
+
+for (col in names(tbl)){
+  
+  roc_aucs <- c()
+  
+  for (i in 1:permutation_n){
+
+    perm_df <- stairs_train_baked
+    perm_df[, eval(parse(text = col))] <- perm_df[sample(1:nrow(perm_df)), eval(parse(text = col))]
+    
+    shuffled_pred <- 
+  predict(
+        stairs_res,
+        newdata = perm_df,
+        type = "response",
+        allow.new.levels = TRUE
+  )
+    
+    predictions <- 
+  tibble(
+    truth = stairs_train_baked$choice,
+    stairs_prob = 1 - shuffled_pred
+  )
+    roc_aucs <- append(roc_aucs, roc_auc(predictions, truth, stairs_prob)[[1,3]])
+  }
+  
+  mean_aucs[[match(col, names(tbl)), 2]][[1]] <- roc_aucs
+  mean_aucs[[match(col, names(tbl)), 3]] <- mean(roc_aucs)
+  
+  }
+
+mean_aucs <- mean_aucs %>% 
+  mutate(
+   importance = model_roc_auc - perm_mean_auc 
+  )
+  
+mean_aucs %>% 
+  mutate(variable = fct_reorder(variable, importance)) %>% 
+  ggplot() +
+  aes(y = variable, x = importance) +
+  geom_bar(stat = "identity")+
+  labs(y = NULL, x = "Variable importance")
 
 ```
+
+
