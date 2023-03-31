@@ -25,6 +25,10 @@ theme_set(theme_light())
 
 ```
 
+# The data
+
+The dataset was collected in university buildings where participants provided information if they used the elevator or not. This was the outcome variable (choice). Other variables were used as predictors.
+  The dataset contains 3588 observations from 288 participants, and 16 variables.
 
 ```{r read_data}
 stairs_raw <- read_csv(here("data/behav.csv"))
@@ -86,17 +90,17 @@ glimpse(stairs_train_baked)
 # Model fitting
 
 ```{r model_fitting, cache=TRUE}
-# stairs_res <-
-#   glmertree(
-#     choice ~ 1 | id | laziness + fatigue + luggage +
-#       elevator_speed + environmental_consciousness +
-#       temperature + appeal +
-#       number_of_people_waiting_for_the_elevator + peers +
-#       health + building_visited + speed +
-#       destination_floor,
-#     family = "binomial",
-#     data = stairs_train_baked
-#   )
+stairs_res <-
+  glmertree(
+    choice ~ 1 | id | laziness + fatigue + luggage +
+      elevator_speed + environmental_consciousness +
+      temperature + appeal +
+      number_of_people_waiting_for_the_elevator + peers +
+      health + building_visited + speed +
+      destination_floor,
+    family = "binomial",
+    data = stairs_train_baked
+  )
 
 
 # write_rds(stairs_res, file = here("model/stairs_res.rds"))
@@ -162,7 +166,9 @@ pr_curve(predictions, truth, stairs_prob) %>% autoplot()
 
 ```
 
-# Investigating variable importance
+The model had a good fit, with a ROC AUC of .91 on the test set. The sensitivity (.78) was somewhat lower than specificity (.89), suggesting that the model predicts the negative cases more accurately than the positive cases.
+
+## Investigating variable importance
 ```{r}
 # Define a function to shuffle a variable within a dataframe
 
@@ -214,4 +220,4 @@ roc_aucs %>%
 
 ```
 
-
+The permutation based variable importance shows that environmental consciousness was the most important predictor, then destination floor, peers, laziness, health, and the building visited. The other variables had little importance. 
