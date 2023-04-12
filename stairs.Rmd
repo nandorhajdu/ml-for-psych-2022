@@ -3,6 +3,8 @@ title: "Staircase and elevator use"
 author: "Nandor Hajdu"
 date: "2023-01-11"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
@@ -161,7 +163,13 @@ accuracy_metrics <-
 
 accuracy_metrics
 
-roc_curve(predictions, truth, stairs_prob) %>% autoplot()
+roc_curve(predictions, truth, stairs_prob) %>% autoplot() + 
+  scale_x_continuous(labels = percent_format()) +
+  scale_y_continuous(labels = percent_format()) +
+  labs(y = "Szenzitivitás", x = "1 - specificitás")
+
+# ggsave(filename = here("figures/roc.png"), dpi = 300)
+
 pr_curve(predictions, truth, stairs_prob) %>% autoplot()
 
 ```
@@ -170,6 +178,10 @@ The model had a good fit, with a ROC AUC of .91 on the test set. The sensitivity
 
 ## Investigating variable importance
 ```{r}
+# Read codebook
+
+
+
 # Define a function to shuffle a variable within a dataframe
 
 df <- stairs_train_baked
