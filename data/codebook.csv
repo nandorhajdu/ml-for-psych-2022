@@ -1,0 +1,14 @@
+variable,description
+environmental_consciousness,Környezettudatosság
+destination_floor,Célemelet
+peers,Társak választása
+laziness,Lustaság
+health,Egészség
+building_visited,Épület
+speed,Feljutás sebessége
+appeal,Egyes opciók vonzósága
+temperature,Hőmérséklet
+number_of_people_waiting_for_the_elevator,A liftre várakozók száma
+measurement_no,Mérésszám (hányadik mérés)
+luggage,Csomag
+fatigue,Fáradtság
