@@ -179,7 +179,7 @@ The model had a good fit, with a ROC AUC of .91 on the test set. The sensitivity
 ## Investigating variable importance
 ```{r}
 # Read codebook
-
+codebook <- read_csv("data/codebook.csv")
 
 
 # Define a function to shuffle a variable within a dataframe
@@ -222,13 +222,16 @@ roc_aucs <-
 
 # Visualize
 roc_aucs %>% 
-  mutate(variable = fct_reorder(variable, importance)) %>% 
+  left_join(codebook, by = "variable") %>%
+  mutate(description = fct_reorder(description, importance)) %>% 
   ggplot() +
-  aes(y = variable, x = importance, 
+  aes(y = description, x = importance, 
       xmin = importance - se_roc_auc, xmax = importance + se_roc_auc) +
   geom_bar(stat = "identity") +
   geom_linerange() +
-  labs(y = NULL, x = "Variable importance")
+  labs(y = NULL, x = "Változó fontosság")
+
+ggsave(filename = here("figures/vi.png"), dpi = 300)
 
 ```
 

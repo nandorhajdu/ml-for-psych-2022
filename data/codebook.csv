@@ -1,6 +1,7 @@
 variable,description
 environmental_consciousness,Környezettudatosság
 destination_floor,Célemelet
+elevator_speed, Lift gyorsasága
 peers,Társak választása
 laziness,Lustaság
 health,Egészség
