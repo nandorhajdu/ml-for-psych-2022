@@ -231,7 +231,7 @@ roc_aucs %>%
   geom_linerange() +
   labs(y = NULL, x = "Változó fontosság")
 
-ggsave(filename = here("figures/vi.png"), dpi = 300)
+# ggsave(filename = here("figures/vi.png"), dpi = 300)
 
 ```
 
